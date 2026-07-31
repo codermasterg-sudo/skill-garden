@@ -63,46 +63,60 @@
 ## 3. 工作流（主链路）
 
 ```
-用户提供简历(Word/PDF) + 对话说明偏好
+用户提供简历 + 对话说明偏好
         ↓
-[1] 解析简历 → 提取：姓名、经验、技能、期望岗位、期望城市、期望薪资
+[1] 理解需求：确认简历位置、期望岗位/城市/薪资/类型、黑名单、投递数量上限
         ↓
-[2] 建立/更新偏好档案（Markdown 存于 skill 数据目录）
-     ├─ 首次：从简历 + 对话收集（岗位关键词、城市、薪资、类型：实习/全职）
-     ├─ 后续：对话中用户新要求随时追加
-     └─ 黑名单（公司/岗位）、偏好记录，长期复用
+[2] 解析简历（agent 自由发挥，无脚本）
+     ├─ docx：python-docx 或读文本
+     ├─ PDF：先文本提取（PyMuPDF/pdftotext），扫描件/图片用视觉读图
+     └─ 结构化结果写入 data/resume.md
         ↓
-[3] 搜索岗位（BOSS 搜索页，按偏好条件）
+[3] 建立/更新偏好档案（agent 用 Read/Edit 维护 data/profile.md，长期复用）
         ↓
-[4] 智能筛选（双层漏斗）
-     ├─ 规则过滤（免费确定性）：黑名单公司/岗位、薪资范围、HR 活跃度>2周、猎头排除
-     └─ LLM 匹配分（阈值 + fail-open）：简历 vs JD 匹配度评分，低于阈值跳过，
-         评分失败不静默跳过（fail-open 放行）
+[4] 搜索岗位（search_jobs.py：CloakBrowser 抓取 → 岗位 JSON 列表）
         ↓
-[5] 点击「立即沟通」（唯一投递动作）
-     ├─ 真实点击（CloakBrowser DOM），非 API 构造
-     ├─ 120 弹窗自动点「好/继续沟通」，150 硬顶停止
-     └─ 记录已投递岗位 ID（去重，不重复打扰）
+[5] 筛选与判断（agent 自主）：结合需求/简历/档案判断岗位合适度
+     ├─ 岗位职责/技能匹配度
+     ├─ 薪资/城市/公司/类型符合偏好
+     └─ 黑名单排除
         ↓
-[6] 循环下一批 → 直到当日限额或用户停止
+[6] 投递（apply_action.py：跳详情页 → 点「立即沟通」）
+     ├─ 脚本强制：150 硬顶检查 + 风控即停
+     └─ 120 弹窗自动应答
+        ↓
+[7] 记录（agent 负责）：追加一行到 data/applied.md（必要字段 + 用户要求信息）
+        ↓
+[8] 收尾：汇报投递数量/成功失败/风控情况/下一步建议
 ```
 
-## 4. 数据文件（Markdown，存 skill 数据目录）
+**核心分工**：skill 提供动手能力（2 个动作脚本），不做决策；解析简历、判断岗位合适度、筛选、节奏控制、记录全部由 agent 自主完成。
+
+## 4. 数据文件（agent 维护，skill 目录保持干净）
 
 ```
 skills/boss-auto-apply/
 ├── SKILL.md              # skill 入口（frontmatter: name + description）
-├── data/                 # 数据目录（运行时生成，gitignore）
-│   ├── profile.md        # 用户偏好档案（岗位/城市/薪资/类型/黑名单/备注）
-│   ├── applied.md        # 已投递记录（岗位ID/时间/状态）
-│   └── state.md          # 运行状态（当日投递数/批次/风控状态）
-├── scripts/              # Python 辅助脚本
-│   ├── parse_resume.py   # 解析 Word/PDF 简历
-│   ├── search_filter.py  # 搜索 + 规则过滤 + LLM 匹配
-│   └── apply_action.py   # 点击「立即沟通」+ 限额处理
+├── README.md             # 用途/安装/使用/免责声明
+├── data/                 # 运行时数据（gitignore，不入库）
+│   ├── applied.md        # 已投递记录（agent 追加，一行一条）
+│   └── browser_profile/  # 浏览器 profile（登录态持久化）
+├── scripts/              # 2 个原子动作脚本
+│   ├── search_jobs.py    # 搜索岗位 → JSON（CloakBrowser）
+│   ├── apply_action.py   # 点击「立即沟通」+ 150 硬顶 + 风控即停
+│   └── requirements.txt
 └── references/
     └── selectors.md      # BOSS 页面选择器地图（集中管理，防改版）
 ```
+
+`applied.md` 格式（agent 每投递一次追加一行，一行一条）：
+
+```markdown
+2026-07-31 10:23 job_id=12345 状态=成功 备注=字节跳动 Python后端
+```
+
+- 必要字段：日期、时间、job_id、状态
+- 用户要求的其他信息随时追加到该行
 
 ## 5. 风控设计（三档分类，不过度谨慎）
 
@@ -152,11 +166,10 @@ skills/boss-auto-apply/
 
 ## 10. 验收标准
 
-- [ ] SKILL.md 可被 Claude Code 正确识别（frontmatter 规范）
-- [ ] 简历解析脚本可解析 Word/PDF，提取关键字段
-- [ ] 偏好档案可建立、更新、持久化（Markdown）
-- [ ] 搜索 + 双层筛选（规则 + LLM）可用
-- [ ] 点击「立即沟通」+ 120/150 限额处理可用
-- [ ] 已投递去重记录可用
-- [ ] 风控信号即停 + 通知用户
+- [ ] SKILL.md 可被通用 agent 正确识别（frontmatter 规范）
+- [ ] 只提供 2 个原子动作脚本（search_jobs / apply_action），无过度设计
+- [ ] 简历解析、岗位判断、筛选、节奏、记录全部由 agent 决策（无对应脚本）
+- [ ] apply_action 强制 150 硬顶 + 风控即停（安全底线）
+- [ ] 投递记录由 agent 维护（applied.md 一行一条，含必要字段 + 用户要求信息）
+- [ ] 测试位于 tests/boss-auto-apply/（skill 目录干净）
 - [ ] 选择器地图集中管理，控制层/业务层分离
