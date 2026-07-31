@@ -14,7 +14,6 @@
 *.log
 tmp/
 
-# boss-auto-apply 运行时数据
-skills/boss-auto-apply/data/
-# 保留 data/ 目录骨架
-!skills/boss-auto-apply/data/.gitkeep
+# boss-auto-apply 运行时数据（模板文件入库，运行时文件忽略）
+skills/boss-auto-apply/data/applied.md
+skills/boss-auto-apply/data/browser_profile/
