@@ -13,3 +13,8 @@
 *.local
 *.log
 tmp/
+
+# boss-auto-apply 运行时数据
+skills/boss-auto-apply/data/
+# 保留 data/ 目录骨架
+!skills/boss-auto-apply/data/.gitkeep
