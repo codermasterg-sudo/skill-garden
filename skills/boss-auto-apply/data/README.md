@@ -5,7 +5,7 @@
 | 文件 | 用途 |
 |---|---|
 | `profile.md` | 用户偏好档案（模板入库；运行时由 agent 对话更新，长期复用） |
-| `state.md` | 运行状态（当日投递数/批次/风控暂停） |
+| `state.md` | 运行状态（日期/当日投递数/批次/风控暂停，跨天自动重置） |
 | `applied.md` | 已投递记录（去重用，运行时生成，不入库） |
 | `browser_profile/` | CloakBrowser 浏览器 profile（登录态 cookie 持久化，运行时生成，不入库） |
 

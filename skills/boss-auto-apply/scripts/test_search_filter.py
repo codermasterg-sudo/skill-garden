@@ -44,6 +44,25 @@ class TestSearchFilter(unittest.TestCase):
         self.assertIn("query=Python", url)
         self.assertIn("city=101010100", url)  # 北京城市码
 
+    def test_rule_filter_boss_active(self):
+        # HR 活跃度：min_active_days=2 只保留 2 天内活跃
+        result = rule_filter(self.jobs, {
+            "blacklist_companies": [], "keyword": "", "job_type": "",
+            "min_active_days": 2, "exclude_headhunter": False,
+        })
+        ids = [j["id"] for j in result]
+        self.assertIn("1", ids)   # 2天内活跃 ✅
+        self.assertNotIn("2", ids)  # 本周活跃（>2天）排除
+
+    def test_rule_filter_headhunter(self):
+        # 猎头排除：公司名含「猎头」排除
+        jobs = [{"id": "5", "title": "Python", "company": "某猎头公司", "type": "全职"}]
+        result = rule_filter(jobs, {
+            "blacklist_companies": [], "keyword": "", "job_type": "",
+            "min_active_days": 0, "exclude_headhunter": True,
+        })
+        self.assertEqual(result, [])
+
     def test_llm_score(self):
         # 用 patch 模拟 LLM 返回
         with patch("llm_matcher._call_llm", return_value=json.dumps({"score": 85, "reason": "技能匹配"})):

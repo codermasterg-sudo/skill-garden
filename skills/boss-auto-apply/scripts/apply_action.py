@@ -32,7 +32,7 @@ def handle_risk_signal(page) -> bool:
 
 def handle_quota_prompt(page) -> bool:
     """检测 120 限额弹窗并点击「好/继续沟通」。返回是否处理了弹窗。"""
-    for selector in ["text=好", ".confirm-btn", "text=继续沟通"]:
+    for selector in ['text="好"', ".confirm-btn", 'text="继续沟通"']:
         try:
             btn = page.query_selector(selector)
             if btn:
@@ -57,6 +57,10 @@ def say_hello(page, job_id: str, state_path: Path, delay_range=(MIN_DELAY, MAX_D
     # 拟人化延迟
     time.sleep(random.uniform(*delay_range))
 
+    # 跳转到岗位详情页
+    page.goto(f"https://www.zhipin.com/job_detail/{job_id}.html", timeout=60000)
+    page.wait_for_load_state("networkidle")
+
     # 真实点击「立即沟通」
     btn = page.query_selector(".btn-startchat")
     if not btn:
@@ -67,6 +71,15 @@ def say_hello(page, job_id: str, state_path: Path, delay_range=(MIN_DELAY, MAX_D
 
     # 处理 120 弹窗（出现则确认）
     handle_quota_prompt(page)
+
+    # 投递验证：点击后应出现聊天/沟通界面（如「立即沟通」按钮消失或出现输入框）
+    try:
+        chat_input = page.query_selector(".chat-input, textarea, .send-msg")
+        if not chat_input:
+            print(f"点击后未检测到聊天界面（job {job_id}），可能投递未成功。", file=sys.stderr)
+            return False
+    except Exception:
+        pass
 
     # 风控检测：命中即停并持久化
     if handle_risk_signal(page):
@@ -104,8 +117,6 @@ def main():
     from cloakbrowser import launch
     with launch(user_data_dir=str(profile_dir), headless=False, humanize=True) as browser:
         page = browser.new_page()
-        page.goto("https://www.zhipin.com/web/geek/job", timeout=60000)
-        page.wait_for_load_state("networkidle")
         ok = say_hello(page, args.job_id, state_path)
         sys.exit(0 if ok else 1)
 

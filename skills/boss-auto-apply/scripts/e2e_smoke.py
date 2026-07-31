@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """端到端冒烟测试：不启动浏览器，验证各脚本 CLI 可用、数据文件流转正确。"""
+import datetime
 import json
 import os
 import subprocess
@@ -46,10 +47,13 @@ class TestE2E(unittest.TestCase):
         self.assertEqual(len(data), 1)
 
     def test_apply_action_state_cli(self):
-        # 用 --state 指向临时文件，跑 say_hello 前先验证状态可读写
+        # 验证 state_manager CLI 层流转：state 文件可被 apply_action 的 state 逻辑读写
         state = os.path.join(self.tmpdir, "state.md")
-        # state_manager 单测已覆盖，这里验证 CLI 层 state 传递
-        self.assertTrue(True)
+        from state_manager import load_state, update_state
+        update_state(state, applied_today=7)
+        state = load_state(state)
+        self.assertEqual(state["applied_today"], 7)
+        self.assertEqual(state["date"], datetime.date.today().isoformat())
 
 
 if __name__ == "__main__":

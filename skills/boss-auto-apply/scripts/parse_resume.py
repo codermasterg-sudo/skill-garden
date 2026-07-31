@@ -42,10 +42,12 @@ def extract_fields(text: str) -> dict:
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
 
-    # 姓名：第一行（非空非标题）
+    # 姓名：第一行（非空非标题），只取姓名部分（截断手机号/邮箱等）
     for line in lines:
         if not line.startswith(("#", "简历", "个人")):
-            fields["name"] = line
+            name = re.split(r"[\s|，,]+", line)[0]
+            name = re.sub(r"(手机|电话|邮箱|微信).*", "", name)
+            fields["name"] = name
             break
 
     # 技能：匹配「熟悉/掌握/精通/熟练」开头的关键词（技术栈常见词）

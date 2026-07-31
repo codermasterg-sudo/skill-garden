@@ -1,4 +1,5 @@
 # test_apply_action.py
+import datetime
 import json, os, tempfile, unittest
 from unittest.mock import MagicMock, patch
 
@@ -13,9 +14,18 @@ class TestApplyAction(unittest.TestCase):
     def test_state_init_and_update(self):
         state = load_state(self.state_path)
         self.assertEqual(state["applied_today"], 0)
+        self.assertEqual(state["date"], datetime.date.today().isoformat())
         update_state(self.state_path, applied_today=5)
         state = load_state(self.state_path)
         self.assertEqual(state["applied_today"], 5)
+
+    def test_state_reset_on_new_day(self):
+        # 跨天重置：昨日日期 → 当日计数清零
+        yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+        update_state(self.state_path, date=yesterday, applied_today=99)
+        state = load_state(self.state_path)
+        self.assertEqual(state["applied_today"], 0)
+        self.assertEqual(state["date"], datetime.date.today().isoformat())
 
     def test_handle_quota_prompt_ok(self):
         # 120 弹窗出现 → 点「好」
