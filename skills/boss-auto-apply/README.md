@@ -11,10 +11,17 @@
 - 自动点击「立即沟通」打招呼，处理每日 120/150 限额
 - 风控信号识别即停，仅保留 3 个人工介入点
 
+## 免责声明
+
+- **仅供学习交流使用，禁止用于商业用途。**
+- 自动投递可能违反 BOSS直聘用户协议，有账号被风控（临时停用至永久封禁）风险。
+- **使用者自行承担全部责任**（账号风险、平台追责、法律风险等），作者不承担任何责任。
+- 建议使用小号测试、控制单批数量，谨慎操作。
+
 ## 安装与依赖
 
 ```bash
-pip install cloakbrowser   # 含 playwright，浏览器引擎（首次使用执行）
+pip install -r scripts/requirements.txt   # cloakbrowser / python-docx / PyMuPDF（首次使用执行）
 ```
 
 浏览器 profile 目录 `data/browser_profile/` 自动创建，登录态（cookie）自动持久化，无需手动维护。
@@ -39,16 +46,17 @@ pip install cloakbrowser   # 含 playwright，浏览器引擎（首次使用执�
 skills/boss-auto-apply/
 ├── SKILL.md              # skill 入口（agent 读取并编排执行）
 ├── README.md             # 本文件
-├── data/                 # 运行时数据（gitignore，不入库）
-│   ├── resume.md         # 解析后的结构化简历
-│   ├── profile.md        # 用户偏好档案
-│   ├── applied.md        # 已投递记录
-│   ├── state.md          # 运行状态（当日投递数/批次）
-│   └── browser_profile/  # 浏览器 profile（登录态持久化）
+├── data/                 # 数据目录（模板入库，运行时数据 gitignore）
+│   ├── profile.md        # 用户偏好档案（模板）
+│   ├── state.md          # 运行状态（模板）
+│   └── README.md         # 数据目录说明
 ├── scripts/              # Python 辅助脚本
 │   ├── parse_resume.py   # 解析 Word/PDF 简历
+│   ├── profile_manager.py# 偏好档案管理
 │   ├── search_filter.py  # 搜索 + 规则过滤 + LLM 匹配
-│   └── apply_action.py   # 点击「立即沟通」+ 限额处理
+│   ├── llm_matcher.py    # LLM 匹配模块
+│   ├── apply_action.py   # 点击「立即沟通」+ 限额处理
+│   └── state_manager.py  # 运行状态管理
 └── references/
     └── selectors.md      # BOSS 页面选择器地图（控制层）
 ```
