@@ -23,7 +23,9 @@ skill-garden/
 
 ## Skill 列表
 
-> 待收录。目前仓库只包含骨架，后续按 [收录规范](docs/收录规范.md) 逐个添加。
+- [boss-auto-apply](skills/boss-auto-apply/) — BOSS直聘自动投递：解析简历、偏好档案、智能筛选、自动点击「立即沟通」
+
+> 更多 skill 按 [收录规范](docs/收录规范.md) 逐个添加。
 
 ## 安装到本地
 
