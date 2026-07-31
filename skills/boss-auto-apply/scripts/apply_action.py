@@ -1,24 +1,39 @@
 #!/usr/bin/env python3
-"""点击「立即沟通」自动投递 + 限额处理 + 风控信号检测。"""
+"""点击「立即沟通」：跳转岗位详情页，真实点击投递。
+
+原子动作：对一个岗位点击「立即沟通」→ 返回结果。
+保留的强制约束（安全底线，不依赖 agent 自觉）：
+- 每日 150 硬顶：投递前检查 data/applied.md 今日行数，达到则拒绝
+- 风控即停：检测到风控信号则停止并返回原因
+其余（节奏、去重、记录、批次休息）由 agent 决策，不在本脚本职责内。
+"""
 import argparse
-import json
+import datetime
 import random
-import re
 import sys
 import time
 from pathlib import Path
 
-from state_manager import load_state, update_state
-
-HARD_LIMIT = 150       # 每日硬顶
-PROMPT_LIMIT = 120     # 弹窗提示线
+HARD_LIMIT = 150       # 每日硬顶（BOSS 平台限制）
+PROMPT_LIMIT = 120     # 弹窗提示线（超过后每次投递会弹确认框）
 MIN_DELAY = 3          # 每岗位最小延迟（秒）
 MAX_DELAY = 10         # 最大延迟
-BATCH_SIZE = 20        # 每批岗位数
-BATCH_REST_MIN = 60    # 批间休息（秒）
-BATCH_REST_MAX = 180
 
 RISK_KEYWORDS = ["环境存在异常", "安全验证", "操作过于频繁", "code 37", "您的请求过于频繁"]
+
+
+def count_applied_today(applied_path: Path) -> int:
+    """统计 data/applied.md 中今日的记录条数（硬顶判断用）。"""
+    applied_path = Path(applied_path)
+    today = datetime.date.today().isoformat()
+    if not applied_path.exists():
+        return 0
+    count = 0
+    for line in applied_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line.startswith(today):
+            count += 1
+    return count
 
 
 def handle_risk_signal(page) -> bool:
@@ -44,15 +59,16 @@ def handle_quota_prompt(page) -> bool:
     return False
 
 
-def say_hello(page, job_id: str, state_path: Path, delay_range=(MIN_DELAY, MAX_DELAY)) -> bool:
-    """点击「立即沟通」。返回是否执行了投递。"""
-    state = load_state(state_path)
-    if state["applied_today"] >= HARD_LIMIT:
-        print(f"已达每日硬顶 {HARD_LIMIT}，停止投递。", file=sys.stderr)
-        return False
-    if state.get("risk_paused"):
-        print("风控暂停中，不执行投递。", file=sys.stderr)
-        return False
+def say_hello(page, job_id: str, applied_path: Path, delay_range=(MIN_DELAY, MAX_DELAY)) -> dict:
+    """点击「立即沟通」。返回 {'ok': bool, 'reason': str}。"""
+    result = {"ok": False, "reason": ""}
+
+    # 硬顶强制检查（安全底线）
+    applied_today = count_applied_today(applied_path)
+    if applied_today >= HARD_LIMIT:
+        result["reason"] = f"已达每日硬顶 {HARD_LIMIT}，停止投递"
+        print(result["reason"], file=sys.stderr)
+        return result
 
     # 拟人化延迟
     time.sleep(random.uniform(*delay_range))
@@ -64,61 +80,52 @@ def say_hello(page, job_id: str, state_path: Path, delay_range=(MIN_DELAY, MAX_D
     # 真实点击「立即沟通」
     btn = page.query_selector(".btn-startchat")
     if not btn:
-        print(f"未找到「立即沟通」按钮（job {job_id}），可能页面结构变化。", file=sys.stderr)
-        return False
+        result["reason"] = f"未找到「立即沟通」按钮（job {job_id}），可能页面结构变化"
+        print(result["reason"], file=sys.stderr)
+        return result
     btn.click()
     time.sleep(random.uniform(1, 3))
 
     # 处理 120 弹窗（出现则确认）
     handle_quota_prompt(page)
 
-    # 投递验证：点击后应出现聊天/沟通界面（如「立即沟通」按钮消失或出现输入框）
+    # 投递验证：点击后应出现聊天/沟通界面
     try:
         chat_input = page.query_selector(".chat-input, textarea, .send-msg")
         if not chat_input:
-            print(f"点击后未检测到聊天界面（job {job_id}），可能投递未成功。", file=sys.stderr)
-            return False
+            result["reason"] = f"点击后未检测到聊天界面（job {job_id}），可能投递未成功"
+            print(result["reason"], file=sys.stderr)
+            return result
     except Exception:
         pass
 
-    # 风控检测：命中即停并持久化
+    # 风控即停（安全底线）：命中则停止
     if handle_risk_signal(page):
-        print("检测到风控信号！停止投递，请人工处理。", file=sys.stderr)
-        update_state(state_path, risk_paused=True)
-        return False
+        result["reason"] = "检测到风控信号，停止投递，请人工处理"
+        print(result["reason"], file=sys.stderr)
+        return result
 
-    # 记录投递
-    state = load_state(state_path)
-    applied = state["applied_today"] + 1
-    batch = state["batch"]
-    if applied % BATCH_SIZE == 0:
-        batch += 1
-        rest = random.uniform(BATCH_REST_MIN, BATCH_REST_MAX)
-        print(f"完成一批 {BATCH_SIZE} 个，休息 {int(rest)} 秒。", file=sys.stderr)
-        time.sleep(rest)
-    update_state(state_path, applied_today=applied, batch=batch)
-
-    if applied == PROMPT_LIMIT:
-        print(f"已达 {PROMPT_LIMIT} 次提示线，后续每次都会弹窗确认。", file=sys.stderr)
-    return True
+    result["ok"] = True
+    result["reason"] = "投递成功"
+    return result
 
 
 def main():
     parser = argparse.ArgumentParser(description="BOSS 点击立即沟通")
-    parser.add_argument("--action", choices=["say_hello"], default="say_hello")
-    parser.add_argument("--job-id", required=True)
-    parser.add_argument("--profile", type=Path, default=None)
-    parser.add_argument("--state", type=Path, default=None)
+    parser.add_argument("--job-id", required=True, help="岗位 ID")
+    parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
+    parser.add_argument("--applied", type=Path, default=None, help="applied.md 路径（硬顶检查用）")
     args = parser.parse_args()
 
     profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
-    state_path = args.state or Path(__file__).parent.parent / "data" / "state.md"
+    applied_path = args.applied or Path(__file__).parent.parent / "data" / "applied.md"
 
     from cloakbrowser import launch
     with launch(user_data_dir=str(profile_dir), headless=False, humanize=True) as browser:
         page = browser.new_page()
-        ok = say_hello(page, args.job_id, state_path)
-        sys.exit(0 if ok else 1)
+        result = say_hello(page, args.job_id, applied_path)
+        print(result)
+        sys.exit(0 if result["ok"] else 1)
 
 
 if __name__ == "__main__":
