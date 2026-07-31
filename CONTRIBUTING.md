@@ -20,7 +20,7 @@
 2. 按规范添加或修改 skill。
 3. 提交并推送到远程后开 PR：
    ```bash
-   git add skills/<skill-name>/
+   git add skills/<skill-name>
    git commit -m "feat: add <skill-name> skill"
    git push origin feat/add-<skill-name>
    ```

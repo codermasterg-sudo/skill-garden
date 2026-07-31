@@ -45,7 +45,7 @@ git add skills/<skill-name>
 git commit -m "feat: add <skill-name> skill"
 ```
 
-详细规范见 [docs/收录规范.md](docs/收录规范.md)。
+详细规范见 [docs/收录规范.md](docs/收录规范.md)，贡献指南见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 许可证
 
