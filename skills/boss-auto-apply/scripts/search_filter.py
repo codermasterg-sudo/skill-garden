@@ -50,7 +50,7 @@ def rule_filter(jobs: list, criteria: dict) -> list:
             any(k in company for k in ("猎头", "人力资源")) or jtype == "猎头"
         ):
             continue
-        # HR 活跃度过滤：boss_active 为「{N}天内活跃」格式，N >= min_active_days 才通过
+        # HR 活跃度过滤：boss_active 为「{N}天内活跃」格式，N 超过 min_active_days（上限）则排除
         if min_active_days > 0:
             import re as _re
             m = _re.search(r"(\d+)天内活跃", job.get("boss_active", ""))
