@@ -20,7 +20,8 @@ class TestProfileManager(unittest.TestCase):
             "期望城市": "北京",
             "黑名单": ["某外包公司"],
         })
-        content = open(self.profile_path, encoding="utf-8").read()
+        with open(self.profile_path, encoding="utf-8") as f:
+            content = f.read()
         self.assertIn("Python后端开发", content)
         self.assertIn("Go开发", content)
         self.assertIn("某外包公司", content)

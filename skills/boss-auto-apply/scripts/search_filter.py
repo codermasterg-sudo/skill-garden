@@ -23,7 +23,7 @@ def build_search_url(keyword: str, city: str, page: int = 1) -> str:
 
 
 def rule_filter(jobs: list, criteria: dict) -> list:
-    """规则过滤第一层：黑名单公司/岗位关键词、岗位类型、薪资范围。"""
+    """规则过滤第一层：黑名单公司/岗位关键词、关键词、岗位类型。"""
     blacklist_companies = criteria.get("blacklist_companies", [])
     blacklist_keywords = criteria.get("blacklist_keywords", [])
     keyword = criteria.get("keyword", "")

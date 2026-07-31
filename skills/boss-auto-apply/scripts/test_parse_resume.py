@@ -32,13 +32,18 @@ class TestParseResume(unittest.TestCase):
         self.assertEqual(fields["city"], "北京")
         self.assertIn("20-30K", fields["expected_salary"])
 
-    def test_cli_outputs_json(self):
-        # 通过 CLI 调用验证输出 JSON
+    def test_cli_outputs_markdown(self):
+        # 通过 CLI 调用验证输出 Markdown 且包含字段
+        out_path = os.path.join(self.tmpdir, "out.md")
         result = subprocess.run(
-            [sys.executable, "parse_resume.py", self.docx_path, "--output", os.path.join(self.tmpdir, "out.md")],
+            [sys.executable, "parse_resume.py", self.docx_path, "--output", out_path],
             capture_output=True, text=True, cwd=os.path.dirname(__file__),
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+        with open(out_path, encoding="utf-8") as f:
+            content = f.read()
+        self.assertIn("张三", content)
+        self.assertIn("姓名", content)
 
 if __name__ == "__main__":
     unittest.main()
