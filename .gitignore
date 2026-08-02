@@ -19,3 +19,5 @@ __pycache__/
 # boss-auto-apply 运行时数据（模板文件入库，运行时文件忽略）
 skills/boss-auto-apply/data/applied.md
 skills/boss-auto-apply/data/browser_profile/
+skills/boss-auto-apply/data/browser_window.json
+skills/boss-auto-apply/data/throttle.db

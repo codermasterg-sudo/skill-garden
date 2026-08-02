@@ -1,13 +1,11 @@
-# BOSS 直聘页面选择器地图（控制层）
+# BOSS 直聘页面选择器清单
 
-> 集中管理所有页面选择器。BOSS 改版/检测更新时只改本文件。
-> 更新时间：2026-07-31（基于 FuckJob/get_jobs 参考实现 + 社区最新反馈）
-> ⚠️ 选择器可能已漂移，首次使用时需实测验证，失效则用视觉兜底并更新本文件。
+> 脚本使用的页面元素选择器。页面改版导致脚本找不到元素时，按此清单核对；确认变化后更新本文件并同步脚本。
 
 ## 登录
 | 元素 | 选择器 | 说明 |
 |---|---|---|
-| 登录页检测 | `text=扫码登录` | 出现即未登录，提示用户扫码 |
+| 登录页检测 | URL 含 `/web/user/` 或出现 `.qrcode` | 出现即未登录，提示用户扫码 |
 | 二维码 | `.qrcode` | 扫码区域 |
 
 ## 搜索
@@ -15,18 +13,19 @@
 |---|---|---|
 | 搜索页 URL | `https://www.zhipin.com/web/geek/job?query={keyword}&city={cityCode}` | 岗位搜索 |
 | 岗位列表容器 | `.rec-job-list` | 列表根节点 |
-| 岗位卡片 | `.card-area` | 每张卡片 |
-| 已读标记 | `.is-seen` | 已处理卡片跳过 |
+| 岗位卡片 | `.job-card-wrap` | 每张卡片 |
 | 卡片内岗位名 | `.job-name` | 岗位名链接 |
-| 公司名 | `.company-name` | 公司名 |
-| 薪资 | `.salary` | 加密字体，API 返回明文 |
+| 公司名 | `.boss-name` | 公司名 |
+| 薪资 | API `salaryDesc`（明文） | 页面内 XHR 调 `/wapi/zpgeek/search/joblist.json` 获取明文薪资；DOM `.job-salary` 为字体加密，仅降级用 |
+| 岗位 ID | href 中 `job_detail/{id}.html` 或 API `encryptJobId` | id 为字母数字混合 |
 
-## 沟通（打招呼）
+## 详情页
 | 元素 | 选择器 | 说明 |
 |---|---|---|
 | 立即沟通按钮 | `.btn-startchat` | 点此即打招呼（BOSS 默认带招呼语） |
-| 确认弹窗「好」 | `text=好` / `.confirm-btn` | 120 限额弹窗自动应答 |
-| 沟通列表入口 | `.chat-list` | 聊天页 |
+| 残障人士弹窗 | `.handicapped-dialog` → `.btn-sure` | BOSS 新版必填弹窗，点「确定」关闭 |
+| 确认弹窗「好」 | `text="好"` / `.confirm-btn` | 120 限额弹窗自动应答 |
+| 聊天输入框 | `input[type=text], .chat-input, textarea, .send-msg, [contenteditable]` | 投递成功验证 |
 
 ## 风控信号
 | 信号 | 检测方式 |

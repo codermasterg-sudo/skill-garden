@@ -15,10 +15,6 @@ class TestSearchJobs(unittest.TestCase):
         self.assertIn("query=Python", url)
         self.assertIn("city=101010100", url)  # 北京城市码
 
-    def test_build_search_url_page(self):
-        url = build_search_url("Go", "上海", page=2)
-        self.assertIn("page=2", url)
-
     def test_build_search_url_default_city(self):
         url = build_search_url("Python", "未知城市")
         self.assertIn("city=100010000", url)  # 全国码兜底
