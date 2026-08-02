@@ -12,18 +12,58 @@
 """
 import json
 import random
+import sys
 import time
 from pathlib import Path
+
+# 延迟/退避参数默认值（可被 config/throttle.json 覆盖）
+DELAY_BEFORE_CLICK = (3, 10)   # 投递点击前随机延迟区间 [min, max]
+DELAY_AFTER_CLICK = (1, 3)     # 点击后随机延迟区间 [min, max]
+DELAY_BEFORE_API = (2, 6)      # API 请求前随机延迟区间 [min, max]
+PAGE_TRANSITION_DELAY = (3, 8) # 翻页间随机延迟区间 [min, max]
+CLICK_JITTER = 0.2             # 延迟抖动系数（±20%）
+BACKOFF_BASE = 5               # 失败退避基数（指数递增）
+BACKOFF_MAX = 60               # 退避上限（秒）
+BACKOFF_MAX_RETRIES = 3        # 连续失败最大重试次数
+
+_cfg = None  # 懒加载配置
+
+
+def _get_cfg():
+    """读取配置（懒加载，仅首次调用时读文件；config._cache 置 None 可强制重读）。"""
+    global _cfg
+    if _cfg is None:
+        try:
+            import config
+            _cfg = config.load()
+        except Exception as e:
+            print(f"[humanize] 加载配置失败，使用默认值: {e}", file=sys.stderr)
+            _cfg = {}
+    return _cfg
+
+
+def _range_cfg(key: str, default) -> tuple:
+    """从配置取 [min, max] 区间（点路径），非法则用默认。"""
+    import config
+    val = config.get_path(_get_cfg(), key)
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        try:
+            a, b = float(val[0]), float(val[1])
+            if 0 <= a <= b:
+                return (a, b)
+        except (TypeError, ValueError):
+            pass
+    return default
 
 # ============================================================
 # 随机延迟（拟人化）
 # ============================================================
 
-def random_delay(min_sec: float = 2, max_sec: float = 6) -> None:
+def random_delay(min_sec: float = 2, max_sec: float = 6, jitter: float = 0.2) -> None:
     """随机延迟 [min, max] 秒，带抖动（±20%），模拟真人操作间隔。"""
     base = random.uniform(min_sec, max_sec)
-    jitter = random.uniform(0.8, 1.2)  # ±20% 抖动
-    time.sleep(base * jitter)
+    jitter_amp = random.uniform(1 - jitter, 1 + jitter)  # ±jitter 抖动
+    time.sleep(base * jitter_amp)
 
 
 def api_request_delay() -> None:
@@ -31,17 +71,17 @@ def api_request_delay() -> None:
 
     每次请求 API 前调用，避免高频请求触发风控。
     """
-    random_delay(2, 6)
+    random_delay(*_range_cfg("search.delay_before_api", DELAY_BEFORE_API))
 
 
 def page_transition_delay() -> None:
     """页面跳转/翻页间的拟人化延迟（3-8 秒 + 抖动）。"""
-    random_delay(3, 8)
+    random_delay(*_range_cfg("search.page_transition_delay", PAGE_TRANSITION_DELAY))
 
 
 def after_click_delay() -> None:
     """点击后的拟人化延迟（1-3 秒 + 抖动）。"""
-    random_delay(1, 3)
+    random_delay(*_range_cfg("apply.delay_after_click", DELAY_AFTER_CLICK))
 
 
 # ============================================================
@@ -184,7 +224,7 @@ class CrossProcessThrottle:
             conn.close()
 
     def get_daily_count(self) -> int:
-        """查询当日已执行次数（供硬顶检查）。"""
+        """查询当日已执行次数（供投递上限检查）。"""
         import sqlite3
         import datetime
 
@@ -211,15 +251,15 @@ def backoff_wait(fail_count: int) -> None:
 
     首次失败等 5-10 秒，之后 10-20、20-40 秒递增，避免快速重试。
     """
-    base = 5 * (2 ** fail_count)  # 5, 10, 20, 40...
+    base = BACKOFF_BASE * (2 ** fail_count)  # 5, 10, 20, 40...
     jitter = random.uniform(0.8, 1.3)
-    wait = min(base * jitter, 60)  # 上限 60 秒
+    wait = min(base * jitter, BACKOFF_MAX)  # 上限 60 秒
     print(f"等待 {wait:.0f} 秒后重试（失败 {fail_count} 次）...", flush=True)
     time.sleep(wait)
 
 
 # ============================================================
-# 每日/会话硬顶（供投递等动作复用）
+# 每日/会话投递上限（供投递等动作复用）
 # ============================================================
 
 def daily_limit_check(applied_path, limit: int) -> int:

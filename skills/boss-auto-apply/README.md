@@ -20,7 +20,7 @@
 | `scripts/search_jobs.py` | 在已有实例中搜索岗位（CDP 复用，默认翻第 1~3 页，`--pages start,end` 可调） | JSON 岗位列表（id/title/company/salary） |
 | `scripts/apply_action.py` | 在已有实例中点击「立即沟通」（CDP 复用） | `{'ok': bool, 'reason': str}` |
 
-脚本保留的强制约束（安全底线）：每日 150 硬顶检查、风控信号即停。
+脚本保留的强制约束（安全底线）：每日投递上限检查、风控信号即停。
 
 > **浏览器实例**：所有操作基于一个浏览器实例。先 `browser.py open` 打开（有头=窗口可见供用户查看/扫码；`--headless`=无头纯后台不抢屏幕），搜索/投递脚本通过 CDP 连接复用该实例。每次只开一个实例（profile 单例），已有实例时再 `open` 会直接复用。调试端口为**系统随机端口**（避开 9222/9223/9229 等 BOSS 已知检测点），仅监听 127.0.0.1，关闭即释放。实例信息写入临时文件 `data/browser_window.json`（pid + 随机端口 + 有头/无头）。
 
@@ -61,7 +61,7 @@ skills/boss-auto-apply/
 │   ├── browser.py        # 浏览器管理 CLI（open/close/port）
 │   ├── browser_lib.py    # CDP 连接/实例管理公共模块
 │   ├── search_jobs.py    # 搜索岗位 → JSON
-│   ├── apply_action.py   # 点击「立即沟通」+ 150 硬顶 + 风控即停
+│   ├── apply_action.py   # 点击「立即沟通」+ 每日投递上限 + 风控即停
 │   └── requirements.txt
 └── references/
     └── selectors.md      # BOSS 页面选择器清单

@@ -1,5 +1,5 @@
 # test_apply_action.py
-"""测试 apply_action.py 的纯逻辑（硬顶计数、风控检测、弹窗处理、投递流程）。
+"""测试 apply_action.py 的纯逻辑（投递上限计数、风控检测、弹窗处理、投递流程）。
 浏览器真实点击需 CloakBrowser 环境，用 mock 验证流程。"""
 import datetime
 import os
@@ -56,13 +56,13 @@ class TestApplyAction(unittest.TestCase):
         self.assertFalse(handle_risk_signal(page))
 
     def test_say_hello_hard_limit_stop(self):
-        # 已达 150 硬顶 → 不执行投递
+        # 已达 150 投递上限 → 不执行投递
         self._write_applied(today_count=150)
         page = MagicMock()
         result = say_hello(page, "job123", self.applied_path, delay_range=(0, 0.01))
         self.assertFalse(result["ok"])
-        self.assertIn("硬顶", result["reason"])
-        page.goto.assert_not_called()  # 硬顶时不跳转
+        self.assertIn("投递上限", result["reason"])
+        page.goto.assert_not_called()  # 达上限时不跳转
 
     def test_say_hello_success(self):
         self._write_applied(today_count=0)

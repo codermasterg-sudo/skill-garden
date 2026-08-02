@@ -206,14 +206,26 @@ def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no:
     from humanize import api_request_delay, page_transition_delay, backoff_wait, RequestThrottle, CrossProcessThrottle
 
     # 跨进程节流：多次运行 search 脚本也保持间隔（防高频搜索触发风控）
-    CrossProcessThrottle("search", min_interval=10.0).wait()
+    min_search_interval = 10.0
+    try:
+        import config as _cfg_mod
+        min_search_interval = float(_cfg_mod.get_path(_cfg_mod.load(), "search.min_search_interval", 10.0))
+    except Exception:
+        pass
+    CrossProcessThrottle("search", min_interval=min_search_interval).wait()
 
     jobs = []
     if not browser.cdp_alive():
         raise RuntimeError(
             "没有检测到浏览器。请先运行: python3 scripts/browser.py open"
         )
-    throttle = RequestThrottle(max_requests=30)  # 单会话最多 30 次 API 请求
+    # 单会话 API 请求上限（防高频，可从配置 search.request_throttle_max 覆盖）
+    try:
+        import config as _cfg_mod
+        req_max = int(_cfg_mod.get_path(_cfg_mod.load(), "search.request_throttle_max", 30))
+    except Exception:
+        req_max = 30
+    throttle = RequestThrottle(max_requests=req_max)  # 单会话最多 N 次 API 请求
     browser_conn = browser.connect()
     try:
         page = browser_conn.contexts[0].new_page() if browser_conn.contexts else browser_conn.new_page()
@@ -241,8 +253,14 @@ def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no:
             if not page_jobs:
                 # 网络异常，退避重试
                 fail_count += 1
-                if fail_count >= 3:
-                    print("连续 3 次 API 失败，停止", file=sys.stderr)
+                max_retries = 3
+                try:
+                    import config as _cfg_mod
+                    max_retries = int(_cfg_mod.get_path(_cfg_mod.load(), "backoff.max_retries", 3))
+                except Exception:
+                    pass
+                if fail_count >= max_retries:
+                    print(f"连续 {max_retries} 次 API 失败，停止", file=sys.stderr)
                     break
                 backoff_wait(fail_count)
                 continue

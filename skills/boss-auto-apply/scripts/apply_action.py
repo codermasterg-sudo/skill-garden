@@ -3,7 +3,7 @@
 
 原子动作：对一个岗位点击「立即沟通」→ 返回结果。
 保留的强制约束（安全底线，不依赖 agent 自觉）：
-- 每日 150 硬顶：投递前检查 data/applied.md 今日行数，达到则拒绝
+- 每日投递上限：投递前检查 data/applied.md 今日行数，达到则拒绝
 - 风控即停：检测到风控信号则停止并返回原因
 其余（节奏、去重、记录、批次休息）由 agent 决策，不在本脚本职责内。
 """
@@ -14,15 +14,38 @@ import sys
 import time
 from pathlib import Path
 
-HARD_LIMIT = 150       # 每日硬顶（BOSS 平台限制）
+import config  # 限流/拟人化配置（可选，缺失时用内置默认）
+
+HARD_LIMIT = 150       # 每日投递上限（BOSS 平台限制）
 PROMPT_LIMIT = 120     # 弹窗提示线（超过后每次投递会弹确认框）
 MIN_DELAY = 3          # 每岗位最小延迟（秒）
 MAX_DELAY = 10         # 最大延迟
+MIN_APPLY_INTERVAL = 8 # 两次投递最小间隔（秒，脚本强制）
 
 RISK_KEYWORDS = ["环境存在异常", "安全验证", "操作过于频繁", "code 37", "您的请求过于频繁"]
 
 LOGIN_TIMEOUT = 300       # 等待扫码登录的最长时间（秒）
 LOGIN_POLL_INTERVAL = 5   # 登录状态轮询间隔（秒）
+
+# 配置加载（失败静默回退到上述默认值）
+_cfg = None
+
+
+def _load_cfg():
+    """懒加载配置，失败回退默认值（安全底线：默认值即底线）。"""
+    global _cfg
+    if _cfg is None:
+        import config
+        _cfg = config.load()
+    return _cfg
+
+
+def _cfg_int(key: str, default: int) -> int:
+    try:
+        val = config.get_path(_load_cfg(), key)
+        return int(val) if val is not None else default
+    except (TypeError, ValueError):
+        return default
 
 
 def wait_for_login(page) -> bool:
@@ -36,9 +59,11 @@ def wait_for_login(page) -> bool:
     if "/web/user/" not in page.url and not page.query_selector(".qrcode"):
         return True  # 已登录（或无需登录）
     print("检测到登录页，请在浏览器中扫码登录（最长等待 5 分钟）...", file=sys.stderr)
-    deadline = time.time() + LOGIN_TIMEOUT
+    timeout = _cfg_int("login.timeout_seconds", LOGIN_TIMEOUT)
+    poll = _cfg_int("login.poll_interval", LOGIN_POLL_INTERVAL)
+    deadline = time.time() + timeout
     while time.time() < deadline:
-        page.wait_for_timeout(LOGIN_POLL_INTERVAL * 1000)
+        page.wait_for_timeout(poll * 1000)
         try:
             page.wait_for_load_state("domcontentloaded")
         except Exception:
@@ -50,7 +75,7 @@ def wait_for_login(page) -> bool:
 
 
 def count_applied_today(applied_path: Path) -> int:
-    """统计 data/applied.md 中今日的记录条数（硬顶判断用）。"""
+    """统计 data/applied.md 中今日的记录条数（投递上限判断用）。"""
     applied_path = Path(applied_path)
     today = datetime.date.today().isoformat()
     if not applied_path.exists():
@@ -104,12 +129,15 @@ def enforce_min_interval(applied_path: Path, min_gap: float = 8.0) -> None:
 
 
 def handle_risk_signal(page) -> bool:
-    """检测风控信号，命中返回 True。"""
+    """检测风控信号，命中返回 True。关键词可从配置 risk.keywords 覆盖。"""
     try:
         content = page.content()
     except Exception:
         return False
-    return any(kw in content for kw in RISK_KEYWORDS)
+    keywords = config.get_path(_load_cfg(), "risk.keywords") or RISK_KEYWORDS
+    if not isinstance(keywords, list) or not keywords:
+        keywords = RISK_KEYWORDS
+    return any(kw in content for kw in keywords)
 
 
 def handle_quota_prompt(page) -> bool:
@@ -163,15 +191,17 @@ def say_hello(page, job_id: str, applied_path: Path, delay_range=(MIN_DELAY, MAX
 
     result = {"ok": False, "reason": ""}
 
-    # 硬顶强制检查（安全底线）
+    # 投递上限强制检查（安全底线）
+    hard_limit = _cfg_int("apply.hard_limit", HARD_LIMIT)
     applied_today = count_applied_today(applied_path)
-    if applied_today >= HARD_LIMIT:
-        result["reason"] = f"已达每日硬顶 {HARD_LIMIT}，停止投递"
+    if applied_today >= hard_limit:
+        result["reason"] = f"已达今日投递上限 {hard_limit} 次，停止投递"
         print(result["reason"], file=sys.stderr)
         return result
 
     # 强制投递最小间隔（防连续高频投递，脚本强制）
-    enforce_min_interval(applied_path, min_gap=8.0)
+    min_gap = _cfg_int("apply.min_apply_interval", MIN_APPLY_INTERVAL)
+    enforce_min_interval(applied_path, min_gap=float(min_gap))
 
     # 拟人化延迟（投递前随机 3-10 秒 + 抖动）
     api_request_delay()
@@ -229,7 +259,7 @@ def main():
     parser = argparse.ArgumentParser(description="BOSS 点击立即沟通")
     parser.add_argument("--job-id", required=True, help="岗位 ID")
     parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
-    parser.add_argument("--applied", type=Path, default=None, help="applied.md 路径（硬顶检查用）")
+    parser.add_argument("--applied", type=Path, default=None, help="applied.md 路径（投递上限检查用）")
     args = parser.parse_args()
 
     profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
