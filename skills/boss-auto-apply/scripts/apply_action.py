@@ -124,16 +124,15 @@ def handle_risk_signal(page) -> bool:
 
 
 def handle_quota_prompt(page) -> dict:
-    """检测 BOSS 投递限额提示（120 提醒 / 150 不允许投递），返回信息，不自动点击。
+    """检测并处理 BOSS 投递限额提示（120 提醒 / 150 不允许投递）。
 
     返回 dict：
     - {"quota": None}              未出现限额提示，正常
-    - {"quota": "limit_remind"}    出现 120 提醒弹窗（还可继续投，但需确认）
-    - {"quota": "limit_blocked"}   出现 150 不允许投递（已达硬顶）
-    - {"quota": "blocked", "text": ...} 其它不允许投递文案
+    - {"quota": "limit_remind"}    出现 120 提醒弹窗，**已自动点击「好/继续沟通」关掉**，投递继续
+    - {"quota": "limit_blocked"}   出现 150 不允许投递（已达硬顶），**不点击、停下等用户**
 
-    检测方式：弹窗容器 + 文本关键词。不做点击、不本地计数——
-    是否继续由 agent 根据返回信息决策。
+    检测方式：弹窗容器 + 文本关键词。120 只是提醒（还可继续投），自动点掉
+    不打断任务；150 是硬顶（继续投会一直报错），必须停下等用户处理。
     """
     # 弹窗容器里找限额文案（避免页面正文误命中）
     for dialog_sel in [".confirm-dialog", ".ant-modal", ".dialog", ".modal", ".toast", ".message"]:
@@ -142,11 +141,32 @@ def handle_quota_prompt(page) -> dict:
             if not dialog:
                 continue
             text = (dialog.inner_text() or "")
-            # 150 硬顶 / 不允许投递
+            # 150 硬顶 / 不允许投递：不点击，停下等用户
             if any(k in text for k in ("不允许", "无法继续", "次数已达", "不能投递", "已达上限", "次数已用完")):
                 return {"quota": "limit_blocked", "text": text.strip()[:200]}
-            # 120 提醒（还可继续）
-            if any(k in text for k in ("提示", "提醒", "达到") ) and any(k in text for k in ("沟通", "投递", "次数")):
+            # 120 提醒（还可继续）：自动点击「好/继续沟通」关掉，投递继续
+            if any(k in text for k in ("提示", "提醒", "达到")) and any(k in text for k in ("沟通", "投递", "次数")):
+                # 弹窗内找确认按钮并点击
+                clicked = False
+                for btn in dialog.query_selector_all("button"):
+                    btn_text = (btn.inner_text() or "").strip()
+                    if btn_text in ("好", "继续沟通", "我知道了", "确定"):
+                        try:
+                            btn.click()
+                            time.sleep(1)
+                            clicked = True
+                        except Exception:
+                            pass
+                        break
+                if not clicked:
+                    # 兜底：.confirm-btn 类
+                    try:
+                        confirm = dialog.query_selector(".confirm-btn")
+                        if confirm:
+                            confirm.click()
+                            time.sleep(1)
+                    except Exception:
+                        pass
                 return {"quota": "limit_remind", "text": text.strip()[:200]}
         except Exception:
             continue
@@ -223,10 +243,10 @@ def say_hello(page, job_id: str, delay_range=(MIN_DELAY, MAX_DELAY)) -> dict:
     btn.click()
     after_click_delay()
 
-    # 检测 BOSS 限额提示（120 提醒 / 150 不允许投递），返回给 agent 决策，不自动点击
+    # 检测 BOSS 限额提示：120 提醒自动点掉（投递继续），150 硬顶停下等用户
     result["quota"] = handle_quota_prompt(page)
     if result["quota"].get("quota") == "limit_blocked":
-        result["reason"] = "BOSS 提示投递次数已达上限，不允许继续投递"
+        result["reason"] = "BOSS 提示投递次数已达上限，不允许继续投递，需人工处理"
         print(result["reason"], file=sys.stderr)
         return result
 

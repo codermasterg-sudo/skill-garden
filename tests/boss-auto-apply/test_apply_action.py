@@ -29,10 +29,19 @@ class BaseTestCase(unittest.TestCase):
             pass
 
 
-def _dialog_el(text):
-    """模拟弹窗容器元素（inner_text 返回 text）。"""
+def _dialog_el(text, buttons=()):
+    """模拟弹窗容器元素（inner_text 返回 text；query_selector_all 返回按钮列表）。
+
+    buttons: 按钮文本列表，如 ("好",) —— 120 弹窗自动点击验证用。
+    """
     el = MagicMock()
     el.inner_text.return_value = text
+    btn_els = []
+    for b_text in buttons:
+        b = MagicMock()
+        b.inner_text.return_value = b_text
+        btn_els.append(b)
+    el.query_selector_all.return_value = btn_els
     return el
 
 
@@ -56,10 +65,15 @@ class TestQuotaPrompt(BaseTestCase):
         self.assertEqual(result["quota"], "limit_blocked")
 
     def test_limit_remind(self):
-        # 120 提醒：弹窗出现提示文案
-        page = _page_with_dialogs(_dialog_el("温馨提示：今日沟通次数已较多"))
+        # 120 提醒：弹窗出现提示文案，自动点击「好」关掉
+        btn = MagicMock()
+        btn.inner_text.return_value = "好"
+        remind = _dialog_el("温馨提示：今日沟通次数已较多", buttons=("好",))
+        page = _page_with_dialogs(remind)
         result = handle_quota_prompt(page)
         self.assertEqual(result["quota"], "limit_remind")
+        # 弹窗里的「好」按钮被点击（弹窗被关掉）
+        self.assertTrue(remind.query_selector_all.return_value[0].click.called)
 
     def test_irrelevant_dialog(self):
         # 无关弹窗（如活动弹窗）不误判为限额
@@ -141,13 +155,15 @@ class TestSayHello(BaseTestCase):
         self.assertIn("上限", result["reason"])
 
     def test_say_hello_limit_remind_ok(self):
-        # 120 提醒弹窗（还可继续）→ 投递仍成功，quota 带 remind 信息
-        remind = _dialog_el("温馨提示：今日沟通次数已较多")
+        # 120 提醒弹窗（还可继续）→ 自动点掉后投递仍成功，quota 带 remind 信息
+        remind = _dialog_el("温馨提示：今日沟通次数已较多", buttons=("好",))
         page = _page_for_apply(btn=True, dialogs=(remind,), chat=True)
         with patch("apply_action.time.sleep"):
             result = say_hello(page, "job123", delay_range=(0, 0.01))
         self.assertTrue(result["ok"])
         self.assertEqual(result["quota"]["quota"], "limit_remind")
+        # 弹窗按钮被点击（自动关掉，不打断任务）
+        self.assertTrue(remind.query_selector_all.called)
 
     def test_say_hello_risk_signal(self):
         page = _page_for_apply(btn=True, dialogs=(None,), chat=True, risk_text="您的环境存在异常")

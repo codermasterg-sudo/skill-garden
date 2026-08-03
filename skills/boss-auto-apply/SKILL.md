@@ -164,11 +164,11 @@ python3 scripts/apply_action.py --job-id <id>
 - 脚本强制约束（安全底线，agent 不可跳过）：
   - **风控即停**：检测到风控信号（code 37 / 环境异常 / 操作过于频繁）则停止并返回原因
   - **投递间隔**：距上次投递不足 `apply.min_apply_interval` 秒（默认 8 秒）时等待补齐，防连续高频触发风控。间隔以上次投递记录（`applied` 表 `ts`）为准
-  - **限额感知**：点击后检测 BOSS 页面的投递限额提示（120 提醒 / 150 不允许投递），**不自动点击、不本地计数**，作为信息随结果返回
+  - **限额处理**：点击后检测 BOSS 页面的投递限额提示——**120 提醒弹窗自动点掉（「好/继续沟通」），投递继续**；**150 不允许投递停下等用户**（继续投会一直报错，需人工判断）
 - 返回结果：`{'ok': bool, 'reason': str, 'quota': {...}}`：
   - `ok=true` 投递成功
-  - `ok=false` 时 agent 根据 `reason` 处理（风控→停止通知用户、按钮缺失→视觉兜底、`quota.quota=limit_blocked`→BOSS 已达投递硬顶，今日停止）
-  - `quota.quota`：`None`（正常）/ `limit_remind`（120 提醒，可继续）/ `limit_blocked`（150 硬顶，停止）。**注意：脚本不做本地计数上限，是否继续投由 agent 根据 quota 信息决策**
+  - `ok=false` 时 agent 根据 `reason` 处理（风控→停止通知用户、按钮缺失→视觉兜底、`quota.quota=limit_blocked`→BOSS 已达投递硬顶，等待用户处理）
+  - `quota.quota`：`None`（正常）/ `limit_remind`（120 提醒，**已自动关掉弹窗，投递继续**）/ `limit_blocked`（150 硬顶，**已停下等用户**）。`limit_remind` 无需 agent 处理，`limit_blocked` 时 agent 应停止投递并告知用户
 
 ## Agent 使用指引（自主编排，非固定流程）
 
