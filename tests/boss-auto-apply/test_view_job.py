@@ -341,12 +341,28 @@ class TestTrim(unittest.TestCase):
 class TestCheckRisk(unittest.TestCase):
     def test_risk_hit(self):
         page = MagicMock()
-        page.content.return_value = "您的环境存在异常"
+        page.url = "https://www.zhipin.com/web/geek/job"
+        page.evaluate.return_value = "您的环境存在异常"
         self.assertTrue(_check_risk(page))
 
     def test_risk_miss(self):
         page = MagicMock()
-        page.content.return_value = "正常页面内容"
+        page.url = "https://www.zhipin.com/web/geek/job"
+        page.evaluate.return_value = "正常页面内容"
+        self.assertFalse(_check_risk(page))
+
+    def test_risk_url_captcha(self):
+        # 风控跳转（验证码/登录页 URL 特征）直接命中，不依赖正文
+        page = MagicMock()
+        page.url = "https://www.zhipin.com/captcha/verify?x=1"
+        page.evaluate.return_value = "正常页面内容"
+        self.assertTrue(_check_risk(page))
+
+    def test_risk_short_keyword_not_in_body(self):
+        # 短关键词（如 "code 37"）只在 URL 匹配，不在正文匹配，防误命中
+        page = MagicMock()
+        page.url = "https://www.zhipin.com/web/geek/job"
+        page.evaluate.return_value = "页面有 code 37 字样但无风控"
         self.assertFalse(_check_risk(page))
 
 

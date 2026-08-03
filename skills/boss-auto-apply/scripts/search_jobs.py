@@ -248,7 +248,7 @@ def fetch_jobs_via_dom(page) -> list:
     return jobs
 
 
-def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no: int,
+def search_online(url: str, keyword: str, city: str, page_no: int,
                   max_pages: int = 1, filters: dict = None) -> list:
     """在已有浏览器（CDP 复用）中获取岗位列表。
 
@@ -356,9 +356,8 @@ def main():
     parser.add_argument("--salary", choices=list(FILTER_MAPS["salary"]), default=None, help="薪资待遇: " + "/".join(FILTER_MAPS["salary"]))
     parser.add_argument("--financing-stage", choices=list(FILTER_MAPS["financingStage"]), default=None, help="融资阶段: " + "/".join(FILTER_MAPS["financingStage"]))
     parser.add_argument("--scale", choices=list(FILTER_MAPS["scale"]), default=None, help="公司规模: " + "/".join(FILTER_MAPS["scale"]))
-    parser.add_argument("--pages", default="1,3", help="翻页范围（闭区间，默认 1,3 = 第 1~3 页共 90 个岗位；每页 30 个）")
-    parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
-    parser.add_argument("--output", type=Path, default=None, help="输出 JSON 文件路径")
+    parser.add_argument("--pages", default="1,1", help="翻页范围（闭区间，默认 1,1 = 第 1 页共 30 个岗位；每页 30 个，如 1,3 为第 1~3 页共 90 个）")
+    parser.add_argument("--output", type=Path, default=None, help="同时把结果写入 JSON 文件（token 友好：agent 可只读文件不读 stdout）")
     args = parser.parse_args()
 
     # 解析 "start,end" 闭区间
@@ -393,10 +392,11 @@ def main():
             api_filters[name] = av
 
     url = build_search_url(args.keyword, args.city, url_filters)
-    profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
     try:
-        jobs = search_online(url, profile_dir, args.keyword, args.city, page_no=start_page, max_pages=max_pages, filters=api_filters)
+        jobs = search_online(url, args.keyword, args.city, page_no=start_page, max_pages=max_pages, filters=api_filters)
     except Exception as e:
+        # 失败时 stdout 也输出错误结构（agent 解析 stdout 时能感知失败），stderr 给详情
+        print(json.dumps({"error": str(e)}, ensure_ascii=False), file=sys.stdout)
         print(f"搜索失败: {e}", file=sys.stderr)
         print("提示: 若出现登录页，请先扫码登录；若出现风控信号，请停止人工处理。", file=sys.stderr)
         sys.exit(1)

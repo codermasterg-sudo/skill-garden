@@ -21,23 +21,16 @@ from pathlib import Path
 # 内置兜底（最终一级，与 config.default.json 同构）
 _BUILTIN_DEFAULTS = {
     "apply": {
-        "hard_limit": 150,
-        "quota_prompt_limit": 120,
         "min_apply_interval": 8,
-        "delay_before_click": [3, 10],
         "delay_after_click": [1, 3],
-        "click_jitter": 0.2,
     },
     "search": {
         "min_search_interval": 10,
         "request_throttle_max": 30,
-        "api_min_interval": 2.0,
         "delay_before_api": [2, 6],
         "page_transition_delay": [3, 8],
     },
     "backoff": {
-        "base_seconds": 5,
-        "max_seconds": 60,
         "max_retries": 3,
     },
     "login": {
@@ -67,7 +60,7 @@ def _deep_merge(base: dict, override: dict) -> dict:
 
 
 def load() -> dict:
-    """加载配置：用户自定义 > 内置默认 > 代码硬编码。任何失败静默回退。
+    """加载配置：用户自定义 throttle.json > 内置默认 config.default.json > 代码硬编码。
 
     注意：本函数有模块级缓存（_cache），修改 config 文件后同一进程内
     重复调用返回旧值。测试/调试时可用 config._cache = None 强制重读。

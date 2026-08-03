@@ -21,7 +21,6 @@ DELAY_BEFORE_CLICK = (3, 10)   # 投递点击前随机延迟区间 [min, max]
 DELAY_AFTER_CLICK = (1, 3)     # 点击后随机延迟区间 [min, max]
 DELAY_BEFORE_API = (2, 6)      # API 请求前随机延迟区间 [min, max]
 PAGE_TRANSITION_DELAY = (3, 8) # 翻页间随机延迟区间 [min, max]
-CLICK_JITTER = 0.2             # 延迟抖动系数（±20%）
 BACKOFF_BASE = 5               # 失败退避基数（指数递增）
 BACKOFF_MAX = 60               # 退避上限（秒）
 BACKOFF_MAX_RETRIES = 3        # 连续失败最大重试次数
@@ -135,30 +134,26 @@ class CrossProcessThrottle:
     """跨进程请求节流：SQLite 记录时间戳，多次运行脚本共享。
 
     无论 agent 调用多少次脚本，强制保证两次操作之间有时间间隔。
-    用于搜索/投递等会触达 BOSS 服务器的动作。
+    用于搜索/投递等会触达 BOSS 服务器的动作。库文件与状态库共用
+    ~/.boss-auto-apply/state.db（独立 actions 表）。
 
     用法：
         throttle = CrossProcessThrottle("search", min_interval=10)
         throttle.wait()  # 每次操作前调用
     """
 
-    DB_NAME = "throttle.db"
-
-    def __init__(self, name: str, min_interval: float = 10.0, max_interval: float = 20.0,
-                 data_dir=None):
+    def __init__(self, name: str, min_interval: float = 10.0, data_dir=None):
         """
         Args:
             name: 节流器名称（如 "search"/"apply"），不同动作独立节流
             min_interval: 最小间隔（秒），实际会加随机抖动
-            max_interval: 间隔上限（秒）
-            data_dir: 数据库目录（默认 skill 的 data/ 目录）
+            data_dir: 数据库目录（默认 ~/.boss-auto-apply/）
         """
         if data_dir is None:
-            data_dir = Path(__file__).parent.parent / "data"
+            data_dir = Path.home() / ".boss-auto-apply"
         self.name = name
         self.min_interval = min_interval
-        self.max_interval = max_interval
-        self._db = Path(data_dir) / self.DB_NAME
+        self._db = Path(data_dir) / "state.db"
         self._db.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -223,24 +218,6 @@ class CrossProcessThrottle:
         finally:
             conn.close()
 
-    def get_daily_count(self) -> int:
-        """查询当日已执行次数（供投递上限检查）。"""
-        import sqlite3
-        import datetime
-
-        today = datetime.date.today().isoformat()
-        try:
-            conn = sqlite3.connect(str(self._db))
-            row = conn.execute(
-                "SELECT count, date FROM actions WHERE action = ?", (self.name,)
-            ).fetchone()
-            conn.close()
-            if row and row[1] == today:
-                return row[0]
-            return 0
-        except Exception:
-            return 0
-
 
 # ============================================================
 # 失败退避（防止快速重试触发风控）
@@ -256,24 +233,3 @@ def backoff_wait(fail_count: int) -> None:
     wait = min(base * jitter, BACKOFF_MAX)  # 上限 60 秒
     print(f"等待 {wait:.0f} 秒后重试（失败 {fail_count} 次）...", flush=True)
     time.sleep(wait)
-
-
-# ============================================================
-# 每日/会话投递上限（供投递等动作复用）
-# ============================================================
-
-def daily_limit_check(applied_path, limit: int) -> int:
-    """检查当日已执行次数，达到上限返回 True。文件不存在视为 0。"""
-    import datetime
-    from pathlib import Path
-
-    applied_path = Path(applied_path)
-    today = datetime.date.today().isoformat()
-    if not applied_path.exists():
-        return 0
-    count = 0
-    for line in applied_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith(today):
-            count += 1
-    return count >= limit

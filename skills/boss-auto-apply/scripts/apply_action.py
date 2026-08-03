@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """点击「立即沟通」：跳转岗位详情页，真实点击投递。
 
-原子动作：对一个岗位点击「立即沟通」→ 返回结果。
+原子动作：对一个岗位点击「立即沟通」→ 返回结果（含 BOSS 页面的
+限额/风控信息，由 agent 据此决策）。
 保留的强制约束（安全底线，不依赖 agent 自觉）：
-- 每日投递上限：投递前检查 data/applied.md 今日行数，达到则拒绝
 - 风控即停：检测到风控信号则停止并返回原因
-其余（节奏、去重、记录、批次休息）由 agent 决策，不在本脚本职责内。
+- 投递间隔：距上次投递不足最小间隔时等待补齐（防连续高频触发风控）
+- 限额感知：检测到 BOSS 的 120 提醒弹窗 / 150 不允许投递时返回信息，
+  不自动点击、不本地计数，由 agent 判断
+其余（去重、记录、批次休息）由 agent 决策，不在本脚本职责内。
 """
 import argparse
-import datetime
 import random
 import sys
 import time
@@ -16,8 +18,6 @@ from pathlib import Path
 
 import config  # 限流/拟人化配置（可选，缺失时用内置默认）
 
-HARD_LIMIT = 150       # 每日投递上限（BOSS 平台限制）
-PROMPT_LIMIT = 120     # 弹窗提示线（超过后每次投递会弹确认框）
 MIN_DELAY = 3          # 每岗位最小延迟（秒）
 MAX_DELAY = 10         # 最大延迟
 MIN_APPLY_INTERVAL = 8 # 两次投递最小间隔（秒，脚本强制）
@@ -74,51 +74,20 @@ def wait_for_login(page) -> bool:
     return False
 
 
-def count_applied_today(applied_path: Path) -> int:
-    """统计 data/applied.md 中今日的记录条数（投递上限判断用）。"""
-    applied_path = Path(applied_path)
-    today = datetime.date.today().isoformat()
-    if not applied_path.exists():
-        return 0
-    count = 0
-    for line in applied_path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith(today):
-            count += 1
-    return count
+def last_apply_time() -> float:
+    """最近一次投递的时间戳（秒），无记录返回 0.0（读状态库 applied 表）。"""
+    import state
+    return state.last_applied_time()
 
 
-def last_apply_time(applied_path: Path) -> float:
-    """取最近一次投递的时间戳（从 applied.md 最后一行解析），无记录返回 0。
+def enforce_min_interval(min_gap: float = MIN_APPLY_INTERVAL) -> None:
+    """强制投递最小间隔：距上次投递不足 min_gap 秒则等待补齐（脚本强制，防连续高频投递）。
 
-    兼容 HH:MM 和 HH:MM:SS 两种时间格式（HH:MM 视为该分钟起始）。
+    依赖状态库 applied 表的时间戳——agent 每次投递后往表里写记录
+    （SKILL.md「投递记录」），间隔即以此为准。
     """
-    applied_path = Path(applied_path)
-    if not applied_path.exists():
-        return 0.0
-    lines = [l.strip() for l in applied_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    if not lines:
-        return 0.0
-    # 最后一行格式: YYYY-MM-DD HH:MM[:SS] job_id=... 状态=...
-    last = lines[-1]
-    try:
-        parts = last.split()
-        if len(parts) >= 2:
-            time_part = parts[1]
-            if len(time_part) == 8:  # HH:MM:SS
-                ts = datetime.datetime.strptime(f"{parts[0]} {time_part}", "%Y-%m-%d %H:%M:%S")
-            else:  # HH:MM
-                ts = datetime.datetime.strptime(f"{parts[0]} {time_part}", "%Y-%m-%d %H:%M")
-            return ts.timestamp()
-    except Exception:
-        pass
-    return 0.0
-
-
-def enforce_min_interval(applied_path: Path, min_gap: float = 8.0) -> None:
-    """强制投递最小间隔：距上次投递不足 min_gap 秒则等待补齐（脚本强制，防连续高频投递）。"""
     import time as _t
-    last = last_apply_time(applied_path)
+    last = last_apply_time()
     if not last:
         return
     elapsed = _t.time() - last
@@ -129,29 +98,59 @@ def enforce_min_interval(applied_path: Path, min_gap: float = 8.0) -> None:
 
 
 def handle_risk_signal(page) -> bool:
-    """检测风控信号，命中返回 True。关键词可从配置 risk.keywords 覆盖。"""
+    """检测风控信号，命中返回 True。关键词可从配置 risk.keywords 覆盖。
+
+    优先 URL 特征（风控跳转登录/验证页），正文用 innerText（省内存快），
+    正文匹配只对中文长短语（≥4 中文字）做，短关键词（如 "code 37"）
+    只在 URL 匹配，避免正常页面内容误命中。
+    """
     try:
-        content = page.content()
+        url = page.url
+        if any(mark in url for mark in ("/web/user/", "captcha", "verify", "warn", "risk", "abnormal")):
+            return True
+    except Exception:
+        pass
+    try:
+        text = page.evaluate("document.body ? document.body.innerText : ''")
     except Exception:
         return False
     keywords = config.get_path(_load_cfg(), "risk.keywords") or RISK_KEYWORDS
     if not isinstance(keywords, list) or not keywords:
         keywords = RISK_KEYWORDS
-    return any(kw in content for kw in keywords)
+
+    def _is_body_kw(kw: str) -> bool:
+        return sum(1 for ch in kw if "一" <= ch <= "鿿") >= 4
+    return any(kw in text for kw in keywords if _is_body_kw(kw))
 
 
-def handle_quota_prompt(page) -> bool:
-    """检测 120 限额弹窗并点击「好/继续沟通」。返回是否处理了弹窗。"""
-    for selector in ['text="好"', ".confirm-btn", 'text="继续沟通"']:
+def handle_quota_prompt(page) -> dict:
+    """检测 BOSS 投递限额提示（120 提醒 / 150 不允许投递），返回信息，不自动点击。
+
+    返回 dict：
+    - {"quota": None}              未出现限额提示，正常
+    - {"quota": "limit_remind"}    出现 120 提醒弹窗（还可继续投，但需确认）
+    - {"quota": "limit_blocked"}   出现 150 不允许投递（已达硬顶）
+    - {"quota": "blocked", "text": ...} 其它不允许投递文案
+
+    检测方式：弹窗容器 + 文本关键词。不做点击、不本地计数——
+    是否继续由 agent 根据返回信息决策。
+    """
+    # 弹窗容器里找限额文案（避免页面正文误命中）
+    for dialog_sel in [".confirm-dialog", ".ant-modal", ".dialog", ".modal", ".toast", ".message"]:
         try:
-            btn = page.query_selector(selector)
-            if btn:
-                btn.click()
-                time.sleep(1)
-                return True
+            dialog = page.query_selector(dialog_sel)
+            if not dialog:
+                continue
+            text = (dialog.inner_text() or "")
+            # 150 硬顶 / 不允许投递
+            if any(k in text for k in ("不允许", "无法继续", "次数已达", "不能投递", "已达上限", "次数已用完")):
+                return {"quota": "limit_blocked", "text": text.strip()[:200]}
+            # 120 提醒（还可继续）
+            if any(k in text for k in ("提示", "提醒", "达到") ) and any(k in text for k in ("沟通", "投递", "次数")):
+                return {"quota": "limit_remind", "text": text.strip()[:200]}
         except Exception:
             continue
-    return False
+    return {"quota": None}
 
 
 def handle_handicapped_dialog(page) -> bool:
@@ -180,28 +179,24 @@ def handle_handicapped_dialog(page) -> bool:
         return False
 
 
-def say_hello(page, job_id: str, applied_path: Path, delay_range=(MIN_DELAY, MAX_DELAY)) -> dict:
-    """点击「立即沟通」。返回 {'ok': bool, 'reason': str}。"""
+def say_hello(page, job_id: str, delay_range=(MIN_DELAY, MAX_DELAY)) -> dict:
+    """点击「立即沟通」。返回 {'ok': bool, 'reason': str, 'quota': ...}。
+
+    quota 字段为 BOSS 页面的限额信息（handle_quota_prompt 返回值），
+    agent 据此判断是否继续投递；本地不计数上限，但强制投递间隔。
+    """
     # 拟人化模块（脚本强制频率控制，不依赖 agent）
     sys.path.insert(0, str(Path(__file__).parent))
     from humanize import api_request_delay, after_click_delay, CrossProcessThrottle
 
-    # 跨进程节流：多次投递也保持间隔（配合 enforce_min_interval 双保险）
+    # 跨进程节流：多次投递也保持间隔（防高频触发风控）
     CrossProcessThrottle("apply", min_interval=8.0).wait()
 
-    result = {"ok": False, "reason": ""}
-
-    # 投递上限强制检查（安全底线）
-    hard_limit = _cfg_int("apply.hard_limit", HARD_LIMIT)
-    applied_today = count_applied_today(applied_path)
-    if applied_today >= hard_limit:
-        result["reason"] = f"已达今日投递上限 {hard_limit} 次，停止投递"
-        print(result["reason"], file=sys.stderr)
-        return result
+    result = {"ok": False, "reason": "", "quota": None}
 
     # 强制投递最小间隔（防连续高频投递，脚本强制）
     min_gap = _cfg_int("apply.min_apply_interval", MIN_APPLY_INTERVAL)
-    enforce_min_interval(applied_path, min_gap=float(min_gap))
+    enforce_min_interval(min_gap=float(min_gap))
 
     # 拟人化延迟（投递前随机 3-10 秒 + 抖动）
     api_request_delay()
@@ -228,8 +223,12 @@ def say_hello(page, job_id: str, applied_path: Path, delay_range=(MIN_DELAY, MAX
     btn.click()
     after_click_delay()
 
-    # 处理 120 弹窗（出现则确认）
-    handle_quota_prompt(page)
+    # 检测 BOSS 限额提示（120 提醒 / 150 不允许投递），返回给 agent 决策，不自动点击
+    result["quota"] = handle_quota_prompt(page)
+    if result["quota"].get("quota") == "limit_blocked":
+        result["reason"] = "BOSS 提示投递次数已达上限，不允许继续投递"
+        print(result["reason"], file=sys.stderr)
+        return result
 
     # 处理「残障人士求职」信息弹窗（BOSS 新版必填，出现则点确定）
     handle_handicapped_dialog(page)
@@ -258,12 +257,7 @@ def say_hello(page, job_id: str, applied_path: Path, delay_range=(MIN_DELAY, MAX
 def main():
     parser = argparse.ArgumentParser(description="BOSS 点击立即沟通")
     parser.add_argument("--job-id", required=True, help="岗位 ID")
-    parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
-    parser.add_argument("--applied", type=Path, default=None, help="applied.md 路径（投递上限检查用）")
     args = parser.parse_args()
-
-    profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
-    applied_path = args.applied or Path(__file__).parent.parent / "data" / "applied.md"
 
     # 复用 browser.py open 打开的浏览器（有头或无头均可），不新开/不关
     import sys as _sys
@@ -277,7 +271,7 @@ def main():
     browser_conn = browser.connect()
     try:
         page = browser_conn.contexts[0].new_page() if browser_conn.contexts else browser_conn.new_page()
-        result = say_hello(page, args.job_id, applied_path)
+        result = say_hello(page, args.job_id)
         print(result)
         page.close()
         _sys.exit(0 if result["ok"] else 1)

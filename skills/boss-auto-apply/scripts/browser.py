@@ -7,7 +7,7 @@
     python3 scripts/browser.py port                        # 返回当前实例的调试端口
 
 输出约定（供 agent 读取）：
-- 实例信息写入临时文件 `data/browser_window.json`：{"pid": ..., "port": ..., "headless": ...}
+- 实例信息写入状态库 `~/.boss-auto-apply/state.db` 的 browser 表（pid + 随机调试端口 + 有头/无头）
 - 同时把关键信息打印到 stdout（agent 可直接从返回读取）：
   - open  : "浏览器已打开 pid=... port=...（有头/无头）"
   - close : "浏览器已关闭"
@@ -24,13 +24,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import browser_lib  # noqa: E402
+import state  # noqa: E402
 
 DEFAULT_URL = "https://www.zhipin.com/web/geek/job?query=Python&city=101010100"
 
 
 def cmd_open(args):
     if browser_lib.cdp_alive():
-        info = browser_lib._window_info()
+        info = state.get_browser()
         mode = "有头" if not info.get("headless") else "无头"
         print(f"浏览器已存在 pid={info['pid']} port={info['port']}（{mode}），直接复用。", flush=True)
         return 0
@@ -40,7 +41,7 @@ def cmd_open(args):
     except RuntimeError as e:
         print(f"开窗失败: {e}", file=sys.stderr, flush=True)
         return 1
-    info = browser_lib._window_info()
+    info = state.get_browser()
     mode = "无头" if args.headless else "有头"
     print(f"浏览器已打开 pid={pid} port={info['port']}（{mode}）", flush=True)
     print("用完后可运行: python3 scripts/browser.py close 关闭", flush=True)
@@ -58,8 +59,8 @@ def cmd_close(args):
 
 
 def cmd_port(args):
-    info = browser_lib._window_info()
-    if not info or not browser_lib.cdp_alive():
+    info = state.get_browser()
+    if not info.get("port") or not browser_lib.cdp_alive():
         print("浏览器未打开。请先运行: python3 scripts/browser.py open", file=sys.stderr, flush=True)
         return 1
     print(info["port"], flush=True)  # 仅端口号，agent 直接读取

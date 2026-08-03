@@ -16,9 +16,7 @@ tmp/
 __pycache__/
 *.pyc
 
-# boss-auto-apply 运行时数据（模板文件入库，运行时文件忽略）
-skills/boss-auto-apply/data/applied.md
-skills/boss-auto-apply/data/browser_profile/
-skills/boss-auto-apply/data/browser_window.json
-skills/boss-auto-apply/data/throttle.db
+# boss-auto-apply 运行时数据（存用户目录 ~/.boss-auto-apply/，不入库）
 
+# 测试临时数据
+tests/boss-auto-apply/_test_data/

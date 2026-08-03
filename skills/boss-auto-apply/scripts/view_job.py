@@ -16,7 +16,7 @@
   - 工商信息：`.job-detail-company` 内 `.company-name` 等 `li`
   - 工作地址/经纬度：`.location-address` / `.job-location-map[data-lat]`
   - BOSS 信息：`.job-boss-info`
-- 不依赖列表点击（列表动态）、不依赖详情 XHR（已废弃）。
+- 不依赖列表点击（列表动态）、不依赖详情 XHR。
 - 不枚举关键词：页面有什么元素就取什么，页面结构变化时报错，人工核对后更新选择器。
 
 输出控制（token 友好）：
@@ -273,18 +273,35 @@ def extract_job_from_detail_page(page, job_id: str) -> dict:
 
 
 def _check_risk(page) -> bool:
-    """基础风控检测：页面内容命中关键词即认为风控（读操作也做检查）。"""
+    """基础风控检测：页面内容命中关键词即认为风控（读操作也做检查）。
+
+    优先检查 URL（风控常跳转 /web/user/ 登录页或验证页，成本低）；
+    再查关键区块文本（头部/主体），避免全文 page.content() 序列化整个 DOM
+    （慢且 `code 37` 等短串易在正常内容误命中）。
+    """
+    try:
+        url = page.url
+        # 风控/验证跳转：URL 特征（登录页、验证码、异常提示）
+        if any(mark in url for mark in ("/web/user/", "captcha", "verify", "warn", "risk", "abnormal")):
+            return True
+    except Exception:
+        pass
     keywords = config.get_path(config.load(), "risk.keywords") or RISK_KEYWORDS
     if not isinstance(keywords, list) or not keywords:
         keywords = RISK_KEYWORDS
     try:
-        content = page.content()
+        # 只取页面文本（比 page.content() 省内存/快），命中即风控
+        text = page.evaluate("document.body ? document.body.innerText : ''")
     except Exception:
         return False
-    return any(kw in content for kw in keywords)
+    # 正文匹配只对"中文长短语"（≥4 个中文字符）做，短关键词（如 "code 37"）
+    # 只在 URL 匹配，避免正常页面内容误命中
+    def _is_body_kw(kw: str) -> bool:
+        return sum(1 for ch in kw if "一" <= ch <= "鿿") >= 4
+    return any(kw in text for kw in keywords if _is_body_kw(kw))
 
 
-def view_job(job_id: str, profile_dir: Path) -> dict:
+def view_job(job_id: str) -> dict:
     """查询单个岗位的 JD 详情，返回完整抓取的 dict（未裁剪）。
 
     按 job_id 直接跳转独立详情页，按语义元素抓取（服务端渲染，零额外请求）。
@@ -385,16 +402,14 @@ def _trim(job: dict, fields: list, full: bool = False, desc_limit: int = SUMMARY
 def main():
     parser = argparse.ArgumentParser(description="查看 BOSS 直聘岗位 JD 详情")
     parser.add_argument("--job-id", required=True, help="岗位 ID（search_jobs.py 列表输出中的 id 字段）")
-    parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
     parser.add_argument("--full", action="store_true", help="输出全部字段（JD 全文/公司介绍全文/工商信息/经纬度等）")
     parser.add_argument("--fields", default=None,
                         help="只输出指定字段，逗号分隔。可选项: " + ", ".join(ALL_FIELDS) +
                              "。示例: --fields description 或 --fields welfare,address")
     args = parser.parse_args()
 
-    profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
     try:
-        job = view_job(args.job_id, profile_dir)
+        job = view_job(args.job_id)
     except Exception as e:
         print(f"查看 JD 失败: {e}", file=sys.stderr)
         sys.exit(1)
