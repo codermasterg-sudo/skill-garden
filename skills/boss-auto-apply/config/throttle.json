@@ -2,6 +2,7 @@
   "_comment": "用户自定义限流/拟人化配置。留空即用内置默认值（config.default.json）。可只填想改的项，其余自动合并默认值。单位：秒/次。",
   "apply": {},
   "search": {},
+  "view": {},
   "backoff": {},
   "login": {},
   "risk": {}

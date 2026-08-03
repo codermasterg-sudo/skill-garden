@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """搜索 BOSS 直聘岗位：在已有浏览器实例中获取岗位列表，输出 JSON。
 
-优先通过页面内 XHR 调用 BOSS 列表 API（返回明文薪资 salaryDesc，绕过字体加密）；
-API 失败时降级为 DOM 抓取 + 字体解码。
+优先通过页面内 XHR 调用 BOSS 列表接口（返回明文薪资 salaryDesc）；
+接口不可用时降级为页面元素抓取 + 薪资字符解码。
 
 原子动作：搜索 → 输出岗位列表。筛选、判断、记录均不在本脚本职责内（由 agent 决策）。
 """
@@ -21,10 +21,49 @@ CITY_CODES = {
     "武汉": "101200100", "南京": "101190100", "西安": "101110100",
 }
 
+# 筛选参数映射（实测确认，注意：BOSS 的 URL 参数值与 API 参数值是两套体系！）
+# - URL 参数：页面加载时前端过滤（如 URL degree=202 显示"本科"）
+# - API 参数：joblist.json 接口过滤（如 API degree=203 才返回"本科"）
+# 每项：{中文选项: (URL值, API值)}。API 值为 None 表示该筛选 API 不支持（仅 URL 过滤）。
+# API 实测：degree 支持（202大专/203本科/204硕士）、salary 部分支持、
+#          experience 仅"经验不限"(101)、jobType/scale/financingStage 不支持（code 37）。
+FILTER_MAPS = {
+    "jobType": {   # 求职类型（URL 和 API 均支持）
+        "全职": ("1901", "1901"), "实习": ("1902", "1902"), "兼职": ("1903", "1903"),
+    },
+    "experience": {  # 工作经验（API 仅"经验不限"）
+        "经验不限": ("101", "101"),
+    },
+    "degree": {     # 学历
+        "大专": ("201", "202"), "本科": ("202", "203"), "硕士": ("203", "204"),
+    },
+    "salary": {     # 薪资待遇（API 部分支持，区间模糊匹配）
+        "3K以下": ("401", "402"), "3-5K": ("402", "403"), "5-10K": ("403", "404"),
+    },
+    "financingStage": {  # 融资阶段（仅 URL 支持）
+        "未融资": ("304", None), "天使轮": ("301", None), "A轮": ("302", None),
+        "B轮": ("303", None), "C轮": ("303", None), "D轮及以上": ("305", None), "已上市": ("306", None),
+    },
+    "scale": {      # 公司规模（仅 URL 支持）
+        "0-20人": ("301", None), "20-99人": ("302", None), "100-499人": ("303", None),
+        "500-999人": ("304", None), "1000-9999人": ("305", None), "10000人以上": ("306", None),
+    },
+}
+
+# 中文选项 → URL 参数值（页面展示过滤用）
+def _url_filter_value(filter_name: str, option: str):
+    pair = FILTER_MAPS[filter_name].get(option)
+    return pair[0] if pair else None
+
+# 中文选项 → API 参数值（数据过滤用，None=API 不支持）
+def _api_filter_value(filter_name: str, option: str):
+    pair = FILTER_MAPS[filter_name].get(option)
+    return pair[1] if pair else None
+
 # 列表 API（页面内 XHR 调用，返回明文薪资；页面自身会请求此接口，不触发风控）
 API_JOB_LIST_PATH = "/wapi/zpgeek/search/joblist.json"
 
-# 薪资字体映射：私有区字符 → 数字（DOM 降级时解码用；BOSS 更新字体时需同步）
+# 薪资字符映射：专用区字符 → 数字（页面元素降级时转换用；BOSS 更新时需同步）
 SALARY_FONT_MAP = {
     0xE031: "0", 0xE032: "1", 0xE033: "2", 0xE034: "3", 0xE035: "4",
     0xE036: "5", 0xE037: "6", 0xE038: "7", 0xE039: "8", 0xE03A: "9",
@@ -67,7 +106,7 @@ FETCH_API_JS_TEMPLATE = """
 
 
 def decode_salary(text: str) -> str:
-    """把薪资 DOM 里的私有区字符解码为真实数字（DOM 降级用）。
+    """把薪资文本里的专用区字符转换为数字（页面元素降级用）。
 
     未识别的字符保留原样并标记 ?，便于发现字体更新。
     """
@@ -109,14 +148,31 @@ def wait_for_login(page) -> bool:
     return False
 
 
-def build_search_url(keyword: str, city: str) -> str:
+def build_search_url(keyword: str, city: str, filters: dict = None) -> str:
+    """构建搜索页 URL。
+
+    Args:
+        keyword: 岗位关键词
+        city: 城市（中文名）
+        filters: 筛选条件 dict，key 为 URL 参数名（jobType/experience/degree/salary/
+                 financingStage/scale），value 为参数值。传入的键值直接透传到 URL。
+
+    返回搜索页 URL（BOSS 页面加载时按 URL 参数筛选）。
+    """
     from urllib.parse import quote
     city_code = CITY_CODES.get(city, "100010000")  # 全国
-    return f"https://www.zhipin.com/web/geek/job?query={quote(keyword)}&city={city_code}"
+    url = f"https://www.zhipin.com/web/geek/job?query={quote(keyword)}&city={city_code}"
+    for k, v in (filters or {}).items():
+        if v:
+            url += f"&{k}={v}"
+    return url
 
 
-def fetch_jobs_via_api(page, keyword: str, city: str, page_no: int) -> tuple:
+def fetch_jobs_via_api(page, keyword: str, city: str, page_no: int, filters: dict = None) -> tuple:
     """在页面内 XHR 调列表 API，拿明文薪资。
+
+    Args:
+        filters: 筛选条件 dict（URL 参数名 → 值），透传到 API。
 
     返回 (jobs, is_end)：
     - jobs: 岗位列表（可能为空）
@@ -131,6 +187,7 @@ def fetch_jobs_via_api(page, keyword: str, city: str, page_no: int) -> tuple:
         "page": page_no,
         "pageSize": 30,
     }
+    api_params.update(filters or {})
     api_url = f"{API_JOB_LIST_PATH}?{urlencode(api_params)}"
     api_js = FETCH_API_JS_TEMPLATE.replace("__API_URL__", api_url)
     try:
@@ -191,10 +248,12 @@ def fetch_jobs_via_dom(page) -> list:
     return jobs
 
 
-def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no: int, max_pages: int = 1) -> list:
+def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no: int,
+                  max_pages: int = 1, filters: dict = None) -> list:
     """在已有浏览器（CDP 复用）中获取岗位列表。
 
     优先 API（明文薪资，支持翻页），失败降级 DOM。复用 browser.py open 打开的浏览器实例。
+    filters 为筛选条件（URL 参数名 → 值），透传到 API。
 
     频率控制（脚本强制）：
     - 每次 API 请求前随机延迟（humanize.api_request_delay）
@@ -242,7 +301,7 @@ def search_online(url: str, profile_dir: Path, keyword: str, city: str, page_no:
         for pg in range(page_no, page_no + max_pages):
             try:
                 throttle.acquire()  # 请求上限 + 最小间隔
-                page_jobs, is_end = fetch_jobs_via_api(page, keyword, city, pg)
+                page_jobs, is_end = fetch_jobs_via_api(page, keyword, city, pg, filters)
             except RuntimeError as e:
                 print(str(e), file=sys.stderr)
                 break
@@ -291,6 +350,12 @@ def main():
     parser = argparse.ArgumentParser(description="搜索 BOSS 直聘岗位")
     parser.add_argument("--keyword", required=True, help="搜索关键词（岗位名）")
     parser.add_argument("--city", default="北京", help="城市")
+    parser.add_argument("--job-type", choices=list(FILTER_MAPS["jobType"]), default=None, help="求职类型: " + "/".join(FILTER_MAPS["jobType"]))
+    parser.add_argument("--experience", choices=list(FILTER_MAPS["experience"]), default=None, help="工作经验: " + "/".join(FILTER_MAPS["experience"]))
+    parser.add_argument("--degree", choices=list(FILTER_MAPS["degree"]), default=None, help="学历: " + "/".join(FILTER_MAPS["degree"]))
+    parser.add_argument("--salary", choices=list(FILTER_MAPS["salary"]), default=None, help="薪资待遇: " + "/".join(FILTER_MAPS["salary"]))
+    parser.add_argument("--financing-stage", choices=list(FILTER_MAPS["financingStage"]), default=None, help="融资阶段: " + "/".join(FILTER_MAPS["financingStage"]))
+    parser.add_argument("--scale", choices=list(FILTER_MAPS["scale"]), default=None, help="公司规模: " + "/".join(FILTER_MAPS["scale"]))
     parser.add_argument("--pages", default="1,3", help="翻页范围（闭区间，默认 1,3 = 第 1~3 页共 90 个岗位；每页 30 个）")
     parser.add_argument("--profile", type=Path, default=None, help="浏览器 profile 目录")
     parser.add_argument("--output", type=Path, default=None, help="输出 JSON 文件路径")
@@ -309,10 +374,28 @@ def main():
         sys.exit(1)
     max_pages = end_page - start_page + 1
 
-    url = build_search_url(args.keyword, args.city)
+    # 筛选条件：中文选项 → URL 值（页面过滤）和 API 值（数据过滤）
+    selected = {   # filter_name → 中文选项
+        "jobType": args.job_type, "experience": args.experience,
+        "degree": args.degree, "salary": args.salary,
+        "financingStage": args.financing_stage, "scale": args.scale,
+    }
+    url_filters = {}   # URL 参数（页面展示过滤）
+    api_filters = {}   # API 参数（数据过滤，仅 API 支持的）
+    for name, opt in selected.items():
+        if not opt:
+            continue
+        uv = _url_filter_value(name, opt)
+        if uv:
+            url_filters[name] = uv
+        av = _api_filter_value(name, opt)
+        if av:
+            api_filters[name] = av
+
+    url = build_search_url(args.keyword, args.city, url_filters)
     profile_dir = args.profile or Path(__file__).parent.parent / "data" / "browser_profile"
     try:
-        jobs = search_online(url, profile_dir, args.keyword, args.city, page_no=start_page, max_pages=max_pages)
+        jobs = search_online(url, profile_dir, args.keyword, args.city, page_no=start_page, max_pages=max_pages, filters=api_filters)
     except Exception as e:
         print(f"搜索失败: {e}", file=sys.stderr)
         print("提示: 若出现登录页，请先扫码登录；若出现风控信号，请停止人工处理。", file=sys.stderr)

@@ -14,6 +14,9 @@
     "delay_before_api": [2, 6],
     "page_transition_delay": [3, 8]
   },
+  "view": {
+    "min_view_interval": 5
+  },
   "backoff": {
     "base_seconds": 5,
     "max_seconds": 60,
